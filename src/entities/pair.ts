@@ -7,58 +7,121 @@ import { getCreate2Address } from '@ethersproject/address'
 
 import {
   BigintIsh,
-  FACTORY_ADDRESS,
-  INIT_CODE_HASH,
   MINIMUM_LIQUIDITY,
   ZERO,
   ONE,
-  FIVE,
-  _997,
-  _1000,
-  ChainId
+  _30,
+  _10000,
+  defaultSwapFee,
+  defaultProtocolFeeDenominator
 } from '../constants'
 import { sqrt, parseBigintIsh } from '../utils'
 import { InsufficientReservesError, InsufficientInputAmountError } from '../errors'
 import { Token } from './token'
+import { ChainId } from '../constants'
+import { RoutablePlatform } from './routable-platform'
+import { LiquidityMiningCampaign } from './liquidity-mining-campaign'
 
-let PAIR_ADDRESS_CACHE: { [token0Address: string]: { [token1Address: string]: string } } = {}
+const INITIAL_CACHE_STATE = {
+  [ChainId.MAINNET]: {},
+  [ChainId.RINKEBY]: {},
+  [ChainId.ARBITRUM_TESTNET_V3]: {},
+  [ChainId.SOKOL]: {},
+  [ChainId.XDAI]: {},
+  [ChainId.MATIC]: {}
+}
+
+let PAIR_ADDRESS_CACHE: {
+  [supportedPlatformName: string]: {
+    [chainId: number]: { [token0Address: string]: { [token1Address: string]: string } }
+  }
+} = {
+  [RoutablePlatform.SWAPR.name]: {
+    ...INITIAL_CACHE_STATE
+  },
+  [RoutablePlatform.SUSHISWAP.name]: {
+    ...INITIAL_CACHE_STATE
+  },
+  [RoutablePlatform.UNISWAP.name]: {
+    ...INITIAL_CACHE_STATE
+  },
+  [RoutablePlatform.HONEYSWAP.name]: {
+    ...INITIAL_CACHE_STATE
+  },
+  [RoutablePlatform.BAOSWAP.name]: {
+    ...INITIAL_CACHE_STATE
+  },
+  [RoutablePlatform.LEVINSWAP.name]: {
+    ...INITIAL_CACHE_STATE
+  }
+}
 
 export class Pair {
   public readonly liquidityToken: Token
   private readonly tokenAmounts: [TokenAmount, TokenAmount]
+  public readonly swapFee: BigintIsh = defaultSwapFee
+  public readonly protocolFeeDenominator: BigintIsh = defaultProtocolFeeDenominator
+  public readonly platform: RoutablePlatform
+  public liquidityMiningCampaigns: LiquidityMiningCampaign[]
 
-  public static getAddress(tokenA: Token, tokenB: Token): string {
+  /**
+   * Returns true if the two pairs are equivalent, i.e. have the same address (calculated using create2).
+   * @param other other pair to compare
+   */
+  public equals(other: Pair): boolean {
+    // short circuit on reference equality
+    if (this === other) {
+      return true
+    }
+    return this.liquidityToken.address === other.liquidityToken.address
+  }
+
+  public static getAddress(tokenA: Token, tokenB: Token, platform: RoutablePlatform = RoutablePlatform.SWAPR): string {
     const tokens = tokenA.sortsBefore(tokenB) ? [tokenA, tokenB] : [tokenB, tokenA] // does safety checks
-
-    if (PAIR_ADDRESS_CACHE?.[tokens[0].address]?.[tokens[1].address] === undefined) {
+    const chainId = tokenA.chainId
+    invariant(platform.supportsChain(chainId), 'INVALID_PLATFORM_CHAIN_ID')
+    if (PAIR_ADDRESS_CACHE?.[platform.name]?.[chainId]?.[tokens[0].address]?.[tokens[1].address] === undefined) {
       PAIR_ADDRESS_CACHE = {
         ...PAIR_ADDRESS_CACHE,
-        [tokens[0].address]: {
-          ...PAIR_ADDRESS_CACHE?.[tokens[0].address],
-          [tokens[1].address]: getCreate2Address(
-            FACTORY_ADDRESS,
-            keccak256(['bytes'], [pack(['address', 'address'], [tokens[0].address, tokens[1].address])]),
-            INIT_CODE_HASH
-          )
+        [platform.name]: {
+          ...PAIR_ADDRESS_CACHE[platform.name],
+          [chainId]: {
+            ...PAIR_ADDRESS_CACHE[platform.name][chainId],
+            [tokens[0].address]: {
+              ...PAIR_ADDRESS_CACHE?.[platform.name]?.[chainId]?.[tokens[0].address],
+              [tokens[1].address]: getCreate2Address(
+                platform.factoryAddress[chainId] as string,
+                keccak256(['bytes'], [pack(['address', 'address'], [tokens[0].address, tokens[1].address])]),
+                platform.initCodeHash
+              )
+            }
+          }
         }
       }
     }
-
-    return PAIR_ADDRESS_CACHE[tokens[0].address][tokens[1].address]
+    return PAIR_ADDRESS_CACHE[platform.name][chainId][tokens[0].address][tokens[1].address]
   }
 
-  public constructor(tokenAmountA: TokenAmount, tokenAmountB: TokenAmount) {
+  constructor(
+    tokenAmountA: TokenAmount,
+    tokenAmountB: TokenAmount,
+    swapFee?: BigintIsh,
+    protocolFeeDenominator?: BigintIsh,
+    platform: RoutablePlatform = RoutablePlatform.SWAPR,
+    liquidityMiningCampaigns: LiquidityMiningCampaign[] = []
+  ) {
+    invariant(tokenAmountA.token.chainId === tokenAmountB.token.chainId, 'CHAIN_ID')
     const tokenAmounts = tokenAmountA.token.sortsBefore(tokenAmountB.token) // does safety checks
       ? [tokenAmountA, tokenAmountB]
       : [tokenAmountB, tokenAmountA]
-    this.liquidityToken = new Token(
-      tokenAmounts[0].token.chainId,
-      Pair.getAddress(tokenAmounts[0].token, tokenAmounts[1].token),
-      18,
-      'UNI-V2',
-      'Uniswap V2'
-    )
+
+    this.platform = platform ? platform : RoutablePlatform.SWAPR
+    const liquidityTokenAddress = Pair.getAddress(tokenAmounts[0].token, tokenAmounts[1].token, platform)
+    this.liquidityToken = new Token(tokenAmounts[0].token.chainId, liquidityTokenAddress, 18, 'DXS', 'DXswap')
+    this.protocolFeeDenominator = protocolFeeDenominator ? protocolFeeDenominator : defaultProtocolFeeDenominator
     this.tokenAmounts = tokenAmounts as [TokenAmount, TokenAmount]
+    this.swapFee = swapFee ? swapFee : platform.defaultSwapFee
+    this.liquidityMiningCampaigns = liquidityMiningCampaigns
   }
 
   /**
@@ -127,9 +190,9 @@ export class Pair {
     }
     const inputReserve = this.reserveOf(inputAmount.token)
     const outputReserve = this.reserveOf(inputAmount.token.equals(this.token0) ? this.token1 : this.token0)
-    const inputAmountWithFee = JSBI.multiply(inputAmount.raw, _997)
+    const inputAmountWithFee = JSBI.multiply(inputAmount.raw, JSBI.subtract(_10000, parseBigintIsh(this.swapFee)))
     const numerator = JSBI.multiply(inputAmountWithFee, outputReserve.raw)
-    const denominator = JSBI.add(JSBI.multiply(inputReserve.raw, _1000), inputAmountWithFee)
+    const denominator = JSBI.add(JSBI.multiply(inputReserve.raw, _10000), inputAmountWithFee)
     const outputAmount = new TokenAmount(
       inputAmount.token.equals(this.token0) ? this.token1 : this.token0,
       JSBI.divide(numerator, denominator)
@@ -137,7 +200,15 @@ export class Pair {
     if (JSBI.equal(outputAmount.raw, ZERO)) {
       throw new InsufficientInputAmountError()
     }
-    return [outputAmount, new Pair(inputReserve.add(inputAmount), outputReserve.subtract(outputAmount))]
+    return [
+      outputAmount,
+      new Pair(
+        inputReserve.add(inputAmount),
+        outputReserve.subtract(outputAmount),
+        this.swapFee,
+        this.protocolFeeDenominator
+      )
+    ]
   }
 
   public getInputAmount(outputAmount: TokenAmount): [TokenAmount, Pair] {
@@ -152,13 +223,24 @@ export class Pair {
 
     const outputReserve = this.reserveOf(outputAmount.token)
     const inputReserve = this.reserveOf(outputAmount.token.equals(this.token0) ? this.token1 : this.token0)
-    const numerator = JSBI.multiply(JSBI.multiply(inputReserve.raw, outputAmount.raw), _1000)
-    const denominator = JSBI.multiply(JSBI.subtract(outputReserve.raw, outputAmount.raw), _997)
+    const numerator = JSBI.multiply(JSBI.multiply(inputReserve.raw, outputAmount.raw), _10000)
+    const denominator = JSBI.multiply(
+      JSBI.subtract(outputReserve.raw, outputAmount.raw),
+      JSBI.subtract(_10000, parseBigintIsh(this.swapFee))
+    )
     const inputAmount = new TokenAmount(
       outputAmount.token.equals(this.token0) ? this.token1 : this.token0,
       JSBI.add(JSBI.divide(numerator, denominator), ONE)
     )
-    return [inputAmount, new Pair(inputReserve.add(inputAmount), outputReserve.subtract(outputAmount))]
+    return [
+      inputAmount,
+      new Pair(
+        inputReserve.add(inputAmount),
+        outputReserve.subtract(outputAmount),
+        this.swapFee,
+        this.protocolFeeDenominator
+      )
+    ]
   }
 
   public getLiquidityMinted(
@@ -209,7 +291,7 @@ export class Pair {
         const rootKLast = sqrt(kLastParsed)
         if (JSBI.greaterThan(rootK, rootKLast)) {
           const numerator = JSBI.multiply(totalSupply.raw, JSBI.subtract(rootK, rootKLast))
-          const denominator = JSBI.add(JSBI.multiply(rootK, FIVE), rootKLast)
+          const denominator = JSBI.add(JSBI.multiply(rootK, parseBigintIsh(this.protocolFeeDenominator)), rootKLast)
           const feeLiquidity = JSBI.divide(numerator, denominator)
           totalSupplyAdjusted = totalSupply.add(new TokenAmount(this.liquidityToken, feeLiquidity))
         } else {

@@ -10,6 +10,84 @@ export class Token extends Currency {
   public readonly chainId: ChainId
   public readonly address: string
 
+  public static readonly WETH: { [key: number]: Token } = {
+    [ChainId.MAINNET]: new Token(
+      ChainId.MAINNET,
+      '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+      18,
+      'WETH',
+      'Wrapped Ether'
+    ),
+    [ChainId.RINKEBY]: new Token(
+      ChainId.RINKEBY,
+      '0xc778417E063141139Fce010982780140Aa0cD5Ab',
+      18,
+      'WETH',
+      'Wrapped Ether'
+    ),
+    [ChainId.ARBITRUM_TESTNET_V3]: new Token(
+      ChainId.ARBITRUM_TESTNET_V3,
+      '0xf8456e5e6A225C2C1D74D8C9a4cB2B1d5dc1153b',
+      18,
+      'WETH',
+      'Wrapped Ether'
+    ),
+    [ChainId.SOKOL]: new Token(
+      ChainId.SOKOL,
+      '0xfDc50eF6b67F65Dddc36e56729a9D07BAe1A1f68',
+      18,
+      'WETH',
+      'Wrapped Ether'
+    ),
+    [ChainId.XDAI]: new Token(
+      ChainId.XDAI,
+      '0x6a023ccd1ff6f2045c3309768ead9e68f978f6e1',
+      18,
+      'WETH',
+      'Wrapped Ether on xDai'
+    ),
+    [ChainId.MATIC]: new Token(
+      ChainId.MATIC,
+      '0x8cc8538d60901d19692F5ba22684732Bc28F54A3',
+      18,
+      'WETH',
+      'Wrapped Ether on Matic'
+    )
+  }
+
+  public static readonly WSPOA: { [key: number]: Token } = {
+    [ChainId.SOKOL]: new Token(ChainId.SOKOL, '0xc655c6D80ac92d75fBF4F40e95280aEb855B1E87', 18, 'WSPOA', 'Wrapped SPOA')
+  }
+
+  public static readonly WXDAI: { [key: number]: Token } = {
+    [ChainId.XDAI]: new Token(ChainId.XDAI, '0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d', 18, 'WXDAI', 'Wrapped xDAI')
+  }
+
+  public static readonly WMATIC: { [key: number]: Token } = {
+    [ChainId.MATIC]: new Token(ChainId.MATIC, '0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270', 18, 'WMATIC', 'Wrapped Matic')
+  }
+
+  public static readonly DXD: { [key: number]: Token } = {
+    [ChainId.MAINNET]: new Token(ChainId.MAINNET, '0xa1d65E8fB6e87b60FECCBc582F7f97804B725521', 18, 'DXD', 'DXdao'),
+    [ChainId.RINKEBY]: new Token(ChainId.RINKEBY, '0x554898A0BF98aB0C03ff86C7DccBE29269cc4d29', 18, 'DXD', 'DXdao'),
+    [ChainId.XDAI]: new Token(
+      ChainId.XDAI,
+      '0xb90d6bec20993be5d72a5ab353343f7a0281f158',
+      18,
+      'DXD',
+      'DXdao from Ethereum'
+    )
+  }
+
+  private static readonly NATIVE_CURRENCY_WRAPPER: { [chainId in ChainId]: Token } = {
+    [ChainId.MAINNET]: Token.WETH[ChainId.MAINNET],
+    [ChainId.RINKEBY]: Token.WETH[ChainId.RINKEBY],
+    [ChainId.ARBITRUM_TESTNET_V3]: Token.WETH[ChainId.ARBITRUM_TESTNET_V3],
+    [ChainId.SOKOL]: Token.WSPOA[ChainId.SOKOL],
+    [ChainId.XDAI]: Token.WXDAI[ChainId.XDAI],
+    [ChainId.MATIC]: Token.WMATIC[ChainId.MATIC]
+  }
+
   public constructor(chainId: ChainId, address: string, decimals: number, symbol?: string, name?: string) {
     super(decimals, symbol, name)
     this.chainId = chainId
@@ -39,6 +117,14 @@ export class Token extends Currency {
     invariant(this.address !== other.address, 'ADDRESSES')
     return this.address.toLowerCase() < other.address.toLowerCase()
   }
+
+  public static getNativeWrapper(chainId: ChainId): Token {
+    return Token.NATIVE_CURRENCY_WRAPPER[chainId]
+  }
+
+  public static isNativeWrapper(token: Token): boolean {
+    return Token.NATIVE_CURRENCY_WRAPPER[token.chainId].equals(token)
+  }
 }
 
 /**
@@ -56,29 +142,9 @@ export function currencyEquals(currencyA: Currency, currencyB: Currency): boolea
   }
 }
 
-export const WETH = {
-  [ChainId.MAINNET]: new Token(
-    ChainId.MAINNET,
-    '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
-    18,
-    'WETH',
-    'Wrapped Ether'
-  ),
-  [ChainId.ROPSTEN]: new Token(
-    ChainId.ROPSTEN,
-    '0xc778417E063141139Fce010982780140Aa0cD5Ab',
-    18,
-    'WETH',
-    'Wrapped Ether'
-  ),
-  [ChainId.RINKEBY]: new Token(
-    ChainId.RINKEBY,
-    '0xc778417E063141139Fce010982780140Aa0cD5Ab',
-    18,
-    'WETH',
-    'Wrapped Ether'
-  ),
-  [ChainId.GÖRLI]: new Token(ChainId.GÖRLI, '0xB4FBF271143F4FBf7B91A5ded31805e42b2208d6', 18, 'WETH', 'Wrapped Ether'),
-  [ChainId.KOVAN]: new Token(ChainId.KOVAN, '0xd0A1E359811322d97991E03f863a0C30C2cF029C', 18, 'WETH', 'Wrapped Ether'),
-  [ChainId.XDAI]: new Token(ChainId.XDAI, '0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d', 18, 'WXDAI', 'Wrapped XDAI')
-}
+// reexport for convenience
+export const WETH = Token.WETH
+export const WSPOA = Token.WSPOA
+export const DXD = Token.DXD
+export const WXDAI = Token.WXDAI
+export const WMATIC = Token.WMATIC
